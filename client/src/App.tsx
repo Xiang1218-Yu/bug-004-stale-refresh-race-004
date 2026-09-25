@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { deleteMock, listMocks, replayMock, saveMock } from './api';
 import type { HttpMethod, MockRoute, MockRouteInput, ReplayResult } from './types';
@@ -19,12 +19,24 @@ export default function App() {
   const [result, setResult] = useState<ReplayResult>();
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
+  const refreshVersion = useRef(0);
   const selected = useMemo(() => routes.find((route) => route.id === selectedId), [routes, selectedId]);
 
   useEffect(() => { void refresh(); }, []);
 
   async function refresh() {
-    try { setRoutes(await listMocks()); } catch (error) { setNotice(errorMessage(error)); }
+    const version = ++refreshVersion.current;
+    try {
+      const nextRoutes = await listMocks();
+      if (version < refreshVersion.current) {
+        // Defect seed: a stale response is still committed to the UI.
+        setRoutes(nextRoutes);
+        return;
+      }
+      setRoutes(nextRoutes);
+    } catch (error) {
+      if (version === refreshVersion.current) setNotice(errorMessage(error));
+    }
   }
 
   function selectRoute(route?: MockRoute) {
