@@ -20,22 +20,24 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
   const refreshVersion = useRef(0);
+  const mounted = useRef(true);
   const selected = useMemo(() => routes.find((route) => route.id === selectedId), [routes, selectedId]);
 
-  useEffect(() => { void refresh(); }, []);
+  useEffect(() => {
+    mounted.current = true;
+    void refresh();
+    return () => { mounted.current = false; };
+  }, []);
 
   async function refresh() {
     const version = ++refreshVersion.current;
     try {
       const nextRoutes = await listMocks();
-      if (version < refreshVersion.current) {
-        // Defect seed: a stale response is still committed to the UI.
-        setRoutes(nextRoutes);
-        return;
-      }
+      // Only the latest request may commit; stale responses are dropped.
+      if (!mounted.current || version !== refreshVersion.current) return;
       setRoutes(nextRoutes);
     } catch (error) {
-      if (version === refreshVersion.current) setNotice(errorMessage(error));
+      if (mounted.current && version === refreshVersion.current) setNotice(errorMessage(error));
     }
   }
 
@@ -52,24 +54,34 @@ export default function App() {
     setBusy(true); setNotice('');
     try {
       const saved = await saveMock({ ...form, statusCode: Number(form.statusCode) }, selectedId);
-      await refresh(); selectRoute(saved); setNotice(selectedId ? 'Mock 路由已更新' : 'Mock 路由已创建');
-    } catch (error) { setNotice(errorMessage(error)); }
-    finally { setBusy(false); }
+      await refresh();
+      if (!mounted.current) return;
+      selectRoute(saved); setNotice(selectedId ? 'Mock 路由已更新' : 'Mock 路由已创建');
+    } catch (error) { if (mounted.current) setNotice(errorMessage(error)); }
+    finally { if (mounted.current) setBusy(false); }
   }
 
   async function remove() {
     if (!selected || !window.confirm(`确定删除“${selected.name}”吗？`)) return;
     setBusy(true);
-    try { await deleteMock(selected.id); await refresh(); selectRoute(); setNotice('Mock 路由已删除'); }
-    catch (error) { setNotice(errorMessage(error)); }
-    finally { setBusy(false); }
+    try {
+      await deleteMock(selected.id);
+      await refresh();
+      if (!mounted.current) return;
+      selectRoute(); setNotice('Mock 路由已删除');
+    }
+    catch (error) { if (mounted.current) setNotice(errorMessage(error)); }
+    finally { if (mounted.current) setBusy(false); }
   }
 
   async function replay() {
     setBusy(true); setNotice('');
-    try { setResult(await replayMock({ method: testMethod, path: testPath, body: testBody })); }
-    catch (error) { setNotice(errorMessage(error)); }
-    finally { setBusy(false); }
+    try {
+      const nextResult = await replayMock({ method: testMethod, path: testPath, body: testBody });
+      if (mounted.current) setResult(nextResult);
+    }
+    catch (error) { if (mounted.current) setNotice(errorMessage(error)); }
+    finally { if (mounted.current) setBusy(false); }
   }
 
   return <div className="shell">
